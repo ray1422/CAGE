@@ -1,3 +1,10 @@
+use bevy::prelude::*;
+mod plugins;
+use plugins::CageCameraPlugin;
+
 fn main() {
-    println!("Hello, world!");
+    App::new()
+        .add_plugins(DefaultPlugins)
+        .add_plugins(CageCameraPlugin)
+        .run();
 }
