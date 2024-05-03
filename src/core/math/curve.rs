@@ -20,7 +20,7 @@ use peroxide::fuga::*;
 /// println!("{}", l);
 ///
 /// ```
-pub trait CageCurve: Clone {
+pub trait CageCurve {
     /// length of arc
     fn length(&self) -> f32;
 
@@ -234,7 +234,7 @@ impl CageCurve for CageBezierCurve {
 #[derive(Debug, Clone)]
 pub struct CageShiftCurve<T>
 where
-    T: CageCurve,
+    T: CageCurve + Clone,
 {
     curve: T,
     shift: Vec2,
@@ -242,7 +242,7 @@ where
 
 impl<T> CageShiftCurve<T>
 where
-    T: CageCurve,
+    T: CageCurve + Clone,
 {
     pub fn new(curve: T, shift: Vec2) -> Self {
         CageShiftCurve {
@@ -283,7 +283,7 @@ where
 }
 impl<T> CageCurve for CageShiftCurve<T>
 where
-    T: CageCurve,
+    T: CageCurve + Clone,
 {
     fn length(&self) -> f32 {
         self.curve.length()
