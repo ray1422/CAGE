@@ -1,4 +1,4 @@
-use bevy::math::vec2;
+use bevy::math::{vec2, vec3};
 use bevy::prelude::*;
 use bevy::{
     core_pipeline::core_3d::Camera3dBundle,
@@ -6,6 +6,7 @@ use bevy::{
     input::mouse::{MouseMotion, MouseWheel},
     math::{Mat3, Vec3},
 };
+
 
 pub struct CageCameraPlugin;
 impl Plugin for CageCameraPlugin {
@@ -151,7 +152,7 @@ fn setup_ground(
 
     // light
     commands.spawn(DirectionalLightBundle {
-        transform: Transform::from_translation(Vec3::ONE).looking_at(Vec3::ZERO, Vec3::Y),
+        transform: Transform::from_translation(vec3(0., 10., 0.)).looking_at(Vec3::ZERO, -Vec3::Y),
         ..default()
     });
 }
