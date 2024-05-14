@@ -1,4 +1,7 @@
-use bevy::math::{vec3, Vec3};
+use bevy::{
+    ecs::query::Or,
+    math::{vec3, Vec3},
+};
 
 use self::quadratic::QuadraticBezierCurve;
 
@@ -11,6 +14,15 @@ pub struct Curve {
 }
 
 impl Curve {
+    pub fn form_two_velocity(p: Vec3, v: Vec3, q: Vec3, u: Vec3) -> Self {
+        let len = (q - p).length();
+        let p0 = p;
+        let p1 = p + v.normalize() * len / 3.0;
+        let p2 = q - u.normalize() * len / 3.0;
+        let p3 = q;
+        Self::from_4_points(p0, p1, p2, p3)
+    }
+
     // construct a curve that smoothly connects the two curves from 4 points
     pub fn from_4_points(p0: Vec3, p1: Vec3, p2: Vec3, p3: Vec3) -> Self {
         let mid = (p1 + p2) / 2.0;
@@ -30,6 +42,37 @@ impl Curve {
             .iter()
             .flat_map(move |curve| curve.iter_positions(n))
     }
+
+    // get the position of the curve at t. t is in (0, 1)
+    pub fn position(&self, t: f32) -> Vec3 {
+        let l = t * self.length();
+        let mut idx = self.curves.len() - 1;
+        for (i, &sum_length) in self.sum_lengths.iter().enumerate() {
+            if sum_length >= l {
+                idx = i;
+                break;
+            }
+        }
+        let prefix_len = if idx == 0 {
+            0.
+        } else {
+            self.sum_lengths[idx - 1]
+        };
+        let t = (l - prefix_len) / (self.sum_lengths[idx] - prefix_len);
+        self.curves[idx].position(t)
+    }
+    pub fn velocity(&self, t: f32) -> Vec3 {
+        // TODO: Optimize this
+        if t < 1e-6 {
+            return self.curves[0].position(1e-6) - self.curves[0].position(0.0);
+        }
+        if t > 1.0 - 1e-6 {
+            return self.curves.last().unwrap().position(1.0)
+                - self.curves.last().unwrap().position(1.0 - 1e-6);
+        }
+        return self.position(t + 1e-6) - self.position(t - 1e-6);
+    }
+
     pub fn offset(&self, right: f32, top: f32) -> Self {
         let mut rets = Vec::new();
 
