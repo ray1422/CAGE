@@ -11,6 +11,17 @@ pub struct Curve {
 }
 
 impl Curve {
+    // construct a curve that smoothly connects the two curves from 4 points
+    pub fn from_4_points(p0: Vec3, p1: Vec3, p2: Vec3, p3: Vec3) -> Self {
+        let mid = (p1 + p2) / 2.0;
+        let curve1 = QuadraticBezierCurve::new([p0, p1, mid]);
+        let curve2 = QuadraticBezierCurve::new([mid, p2, p3]);
+        Self {
+            sum_lengths: vec![curve1.length(), curve1.length() + curve2.length()],
+            curves: vec![curve1, curve2],
+        }
+    }
+
     pub fn length(&self) -> f32 {
         self.sum_lengths.last().unwrap().clone()
     }
@@ -23,7 +34,12 @@ impl Curve {
         let mut rets = Vec::new();
 
         for curve in &self.curves {
-            let curves = curve.to_curve().curves.iter().flat_map(|c|c.to_curve2(2., 1e2).curves).collect::<Vec<_>>();
+            let curves = curve
+                .to_curve()
+                .curves
+                .iter()
+                .flat_map(|c| c.to_curve2(2., 1e2).curves)
+                .collect::<Vec<_>>();
             for curve in curves {
                 let [p0, p1, p2] = curve.ctrl_pts;
                 let v0 = p1 - p0;

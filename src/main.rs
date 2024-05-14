@@ -64,18 +64,24 @@ use plugins::{CageCameraPlugin /*RoadPlugin*/};
 // }
 
 fn test_system(mut gizmos: Gizmos) {
-    let curve = QuadraticBezierCurve::new([
-        Vec3::new(-9., 0.0, -2.0),
-        Vec3::new(8.0, 0.0, 8.0),
-        Vec3::new(2.0, 0.0, 2.0),
-    ]);
+    // let curve = QuadraticBezierCurve::new([
+    //     Vec3::new(-9., 0.0, -2.0),
+    //     Vec3::new(8.0, 0.0, 8.0),
+    //     Vec3::new(2.0, 0.0, 2.0),
+    // ]);
+    let curve = Curve::from_4_points(
+        Vec3::new(-9., 0.0, -9.0),
+        Vec3::new(-5.0, 0.0, 8.0),
+        Vec3::new(5.0, 0.0, -9.0),
+        Vec3::new(9., 0.0, -7.0),
+    );
+    // plot line segments of 4 points
+    gizmos.line(Vec3::new(-9., 0.0, -9.0), Vec3::new(-5.0, 0.0, 8.0), Color::WHITE);
+    gizmos.line(Vec3::new(-5.0, 0.0, 8.0), Vec3::new(5.0, 0.0, -9.0), Color::WHITE);
+    gizmos.line(Vec3::new(5.0, 0.0, -9.0), Vec3::new(9., 0.0, -7.0), Color::WHITE);
+    
 
-    let curve_2 = curve.to_curve().offset(0.2, 0.);
-
-    curve
-        .ctrl_pts
-        .windows(2)
-        .for_each(|p| gizmos.line(p[0], p[1], Color::RED));
+    let curve_2 = curve.offset(2., 0.);
 
     curve
         .iter_positions(1024)
