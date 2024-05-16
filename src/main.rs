@@ -1,8 +1,16 @@
+#![feature(btree_cursors)]
+
 use bevy::prelude::*;
 mod plugins;
 
 use cage::core::math::curve::Curve;
-use plugins::{CageCameraPlugin /*RoadPlugin*/};
+use plugins::{
+    transport::{
+        car::{drive_car, test_setup_car_and_path},
+        path::show_debug_path, road::RoadBuildingPlugin,
+    },
+    CageCameraPlugin, RoadPlugin, /*RoadPlugin*/
+};
 
 fn test_system(mut gizmos: Gizmos) {
     // let curve = QuadraticBezierCurve::new([
@@ -16,6 +24,21 @@ fn test_system(mut gizmos: Gizmos) {
         Vec3::new(5.0, 0.0, -9.0),
         Vec3::new(9., 0.0, -7.0),
     );
+
+    // let (curve_a, curve_b) = curve.split_at(Vec3::new(5., 0., 3.));
+    let (curve_a, curve_b) = curve.split_at(Vec3::new(-9., 0.0, -9.0));
+
+    curve_a
+        .iter_positions(1024)
+        .collect::<Vec<Vec3>>()
+        .windows(2)
+        .for_each(|p| gizmos.line(p[0], p[1], Color::CYAN));
+    curve_b
+        .iter_positions(1024)
+        .collect::<Vec<Vec3>>()
+        .windows(2)
+        .for_each(|p| gizmos.line(p[0], p[1], Color::PINK));
+    return;
     // plot line segments of 4 points
 
     gizmos.line(
@@ -75,8 +98,13 @@ fn main() {
     App::new()
         .add_plugins(DefaultPlugins)
         // .add_systems(Startup, test_mesh)
-        .add_systems(Update, test_system)
+        .add_systems(Startup, test_setup_car_and_path)
+        // .add_systems(Update, test_system)
+        .add_systems(Update, show_debug_path)
+        .add_systems(Update, drive_car)
         .add_plugins(CageCameraPlugin)
+        .add_plugins(RoadPlugin)
+        .add_plugins(RoadBuildingPlugin)
         // .add_plugins(RoadPlugin)
         .run();
 }

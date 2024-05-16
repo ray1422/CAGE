@@ -21,7 +21,7 @@ impl Plugin for CageCameraPlugin {
 struct ScrollWheelMomentum(f32);
 
 #[derive(Component)]
-struct Ground;
+pub struct Ground;
 
 #[derive(Component)]
 struct PanOrbitCamera {
@@ -153,6 +153,13 @@ fn setup_ground(
     // light
     commands.spawn(DirectionalLightBundle {
         transform: Transform::from_translation(vec3(0., 10., 0.)).looking_at(Vec3::ZERO, -Vec3::Y),
+        ..default()
+    });
+
+    // light 45 degrees
+    commands.spawn(DirectionalLightBundle {
+        transform: Transform::from_translation(vec3(0., 10., 0.))
+            .looking_at(vec3(1., 0., 1.), -Vec3::Y),
         ..default()
     });
 }

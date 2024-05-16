@@ -1,5 +1,7 @@
 use bevy::math::Vec3;
 
+use super::Curve;
+
 #[derive(Clone, Debug)]
 pub struct QuadraticBezierCurve {
     pub ctrl_pts: [Vec3; 3],
@@ -8,6 +10,15 @@ impl QuadraticBezierCurve {
     pub fn new(ctrl_pts: [Vec3; 3]) -> Self {
         Self { ctrl_pts }
     }
+
+    pub fn start(&self) -> Vec3 {
+        self.ctrl_pts[0]
+    }
+
+    pub fn end(&self) -> Vec3 {
+        self.ctrl_pts[2]
+    }
+
     pub fn to_curve(&self) -> super::Curve {
         super::Curve {
             curves: vec![self.clone()],
@@ -58,6 +69,50 @@ impl QuadraticBezierCurve {
             curves,
             sum_lengths,
         }
+    }
+
+    pub fn distance_to(&self, pt: Vec3) -> f32 {
+        // TODO: optimize this
+        let mut min_dist = f32::INFINITY;
+
+        for i in 0..=1024 {
+            let t = i as f32 / 1024.0;
+            let pos = self.position(t);
+            if (pos - pt).length() < min_dist {
+                min_dist = (pos - pt).length();
+            }
+        }
+        min_dist
+    }
+
+    // split the curve at t
+    pub fn split_at(&self, pt: Vec3) -> (Curve, Curve) {
+        let mut min_dist = f32::INFINITY;
+        let mut t = 0.0;
+        for i in 0..=1024 {
+            let t_ = i as f32 / 1024.0;
+            let pos = self.position(t_);
+            let dist = (pos - pt).length();
+            if dist < min_dist {
+                min_dist = dist;
+                t = t_;
+            }
+        }
+        let (curve1, curve2) = self.split_at_t(t);
+        (curve1.to_curve(), curve2.to_curve())
+    }
+
+    // split the curve at t
+    pub fn split_at_t(&self, t: f32) -> (Self, Self) {
+        let p0 = self.ctrl_pts[0];
+        let p1 = self.ctrl_pts[1];
+        let p2 = self.ctrl_pts[2];
+        let p01 = p0 + (p1 - p0) * t;
+        let p12 = p1 + (p2 - p1) * t;
+        let p012 = p01 + (p12 - p01) * t;
+        let curve1 = Self::new([p0, p01, p012]);
+        let curve2 = Self::new([p012, p12, p2]);
+        (curve1, curve2)
     }
 
     // construct parallel curve
@@ -160,7 +215,7 @@ impl QuadraticBezierCurve {
                 p0, p1, p2, t
             );
             // TODO: report this error
-            0.
+            1e-6
         } else {
             ret
         }
@@ -169,6 +224,8 @@ impl QuadraticBezierCurve {
 
 #[cfg(test)]
 mod tests {
+    use bevy::math::vec3;
+
     use super::*;
     #[test]
     fn test_quadratic_curve() {
@@ -327,7 +384,7 @@ mod tests {
     #[test]
     fn test_divide_with_angle() {
         let curves = [
-        // construct a extremely sharp curve
+            // construct a extremely sharp curve
             super::QuadraticBezierCurve::new([
                 Vec3::new(-4., 0., -4.),
                 Vec3::new(0.0, 0.0, 10.0),
@@ -378,5 +435,38 @@ mod tests {
                 real_len,
             );
         }
+    }
+
+    #[test]
+    fn test_split_curve() {
+        let curve = QuadraticBezierCurve::new([
+            vec3(0.0, 0.0, 0.0),
+            vec3(1.0, 0.0, 0.0),
+            vec3(1.0, 0.0, 1.0),
+        ]);
+        let (curve1, curve2) = curve.split_at(vec3(0.5, 0.0, 0.5));
+        // the length should be very close
+        let len1 = curve1.length();
+        let len2 = curve2.length();
+        let len = curve.length();
+        println!("len: {}, len1+2: {}", len, len1 + len2);
+        assert!(
+            (len - (len1 + len2)).abs() < 1e-4,
+            "len: {:?}, len1: {:?}, len2: {:?}, len1+2: {:?}",
+            len,
+            len1,
+            len2,
+            len1 + len2
+        );
+
+        // test start point and end point should be close
+        let p = curve1.position(1.0);
+        let q = curve2.position(0.0);
+        assert!((p - q).length() < 1e-4, "p: {:?}, q: {:?}", p, q);
+
+        // test velocity
+        let v = curve1.velocity(1.0);
+        let u = curve2.velocity(0.0);
+        assert!((v - u).length() < 1e-6, "v: {:?}, u: {:?}", v, u);
     }
 }

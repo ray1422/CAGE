@@ -1,12 +1,12 @@
-use bevy::{
-    ecs::query::Or,
-    math::{vec3, Vec3},
-};
+use std::cmp::min;
+
+use bevy::math::{vec3, Vec3};
 
 use self::quadratic::QuadraticBezierCurve;
 
 pub mod quadratic;
 
+#[derive(Debug, Clone)]
 pub struct Curve {
     curves: Vec<QuadraticBezierCurve>,
     // the prefix sum of the lengths of each curve
@@ -14,6 +14,35 @@ pub struct Curve {
 }
 
 impl Curve {
+    pub fn from_curves(curves: Vec<QuadraticBezierCurve>) -> Self {
+        let sum_lengths = curves
+            .iter()
+            .map(|curve| curve.length())
+            .scan(0.0, |sum, x| {
+                *sum += x;
+                Some(*sum)
+            })
+            .collect();
+        Self {
+            curves,
+            sum_lengths,
+        }
+    }
+    pub fn slice(&self, start: f32, end: f32) -> Self {
+        let start_pt = self.position(start);
+        let end_pt = self.position(end);
+        self.split_at(start_pt).1.split_at(end_pt).0
+    }
+
+    pub fn slice_by_length(&self, start: f32, end: f32) -> Result<Self, ()> {
+        let start = start / self.length();
+        let end = end / self.length();
+        if start >= end {
+            return Err(());
+        }
+        Ok(self.slice(start, end))
+    }
+
     pub fn form_two_velocity(p: Vec3, v: Vec3, q: Vec3, u: Vec3) -> Self {
         let len = (q - p).length();
         let p0 = p;
@@ -34,6 +63,43 @@ impl Curve {
         }
     }
 
+    pub fn start(&self) -> Vec3 {
+        self.curves[0].start()
+    }
+
+    pub fn end(&self) -> Vec3 {
+        self.curves.last().unwrap().end()
+    }
+
+    pub fn distance_to(&self, pt: Vec3) -> f32 {
+        self.curves
+            .iter()
+            .map(|curve| curve.distance_to(pt))
+            .min_by(|a, b| a.partial_cmp(b).unwrap())
+            .unwrap_or(f32::MAX)
+    }
+
+    // two new curve and the t value
+    pub fn split_at(&self, pt: Vec3) -> (Self, Self) {
+        // determine the curve to split
+        let mut idx: usize = 0;
+        let mut min_dist = f32::MAX;
+        for (i, curve) in self.curves.iter().enumerate() {
+            let dist = curve.distance_to(pt);
+            if dist < min_dist {
+                min_dist = dist;
+                idx = i;
+            }
+        }
+
+        let (mut curve1, curve2) = self.curves[idx].split_at(pt);
+        let mut curves_1 = self.curves[..idx].to_vec();
+        curves_1.append(&mut curve1.curves);
+        let mut curves_2 = curve2.curves;
+        curves_2.extend_from_slice(&self.curves[idx + 1..]);
+        (Self::from_curves(curves_1), Self::from_curves(curves_2))
+    }
+
     pub fn length(&self) -> f32 {
         self.sum_lengths.last().unwrap().clone()
     }
@@ -46,31 +112,58 @@ impl Curve {
     // get the position of the curve at t. t is in (0, 1)
     pub fn position(&self, t: f32) -> Vec3 {
         let l = t * self.length();
-        let mut idx = self.curves.len() - 1;
-        for (i, &sum_length) in self.sum_lengths.iter().enumerate() {
-            if sum_length >= l {
-                idx = i;
-                break;
-            }
-        }
+        let idx = self
+            .sum_lengths
+            .binary_search_by(|&sum_length| {
+                sum_length
+                    .partial_cmp(&l)
+                    .unwrap_or(std::cmp::Ordering::Less)
+            })
+            .unwrap_or_else(|idx| min(idx, self.sum_lengths.len() - 1));
         let prefix_len = if idx == 0 {
             0.
         } else {
             self.sum_lengths[idx - 1]
         };
-        let t = (l - prefix_len) / (self.sum_lengths[idx] - prefix_len);
-        self.curves[idx].position(t)
+        // iter over length_of curve
+        let mut low = 0;
+        let mut high = 1024;
+        while low < high {
+            let mid = (low + high) / 2;
+            let t = mid as f32 / 1024.0;
+            let len = self.curves[idx].length_of(t);
+            if len < l - prefix_len {
+                low = mid + 1;
+            } else {
+                high = mid;
+            }
+        }
+        let t = low as f32 / 1024.0;
+        return self.curves[idx].position(t);
+        // binary search was code by GPT, here's the original code:
+        // iter over length_of curve
+        // for t in 0..1000 {
+        //     let t = t as f32 / 1000.0;
+        //     let len = self.curves[idx].length_of(t);
+        //     if len >= l - prefix_len {
+        //         return self.curves[idx].position(t);
+        //     }
+        // }
+        // let t = (l - prefix_len) / (self.sum_lengths[idx] - prefix_len);
+        // self.curves[idx].position(t)
     }
     pub fn velocity(&self, t: f32) -> Vec3 {
-        // TODO: Optimize this
-        if t < 1e-6 {
+        const EPS: f32 = 1e-6;
+        // TODO: improve the accuracy by calculate the actual
+        // derivative instead of numerical solution
+        if t < EPS {
             return self.curves[0].position(1e-6) - self.curves[0].position(0.0);
         }
         if t > 1.0 - 1e-6 {
             return self.curves.last().unwrap().position(1.0)
-                - self.curves.last().unwrap().position(1.0 - 1e-6);
+                - self.curves.last().unwrap().position(1.0 - EPS);
         }
-        return self.position(t + 1e-6) - self.position(t - 1e-6);
+        return self.position(t + EPS) - self.position(t - EPS);
     }
 
     pub fn offset(&self, right: f32, top: f32) -> Self {
