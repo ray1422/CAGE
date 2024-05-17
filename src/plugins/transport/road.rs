@@ -71,6 +71,10 @@ impl RoadIndex {
         self.roads.insert(e);
     }
 
+    pub fn add_junction(&mut self, e: Entity) {
+        self.junctions.insert(e);
+    }
+
     pub fn collisions(
         &self,
         _px: f32,
@@ -409,7 +413,11 @@ fn spawn_road(
 
 /// connections: ((P, V), (Q, U)) where P, Q is in and out points,
 /// V and U is direction vector. Entity is path entity
-fn spawn_junction(mut commands: &mut Commands, road_index: &mut RoadIndex, bp: JunctionBluePrint) {
+fn spawn_junction(
+    mut commands: &mut Commands,
+    road_index: &mut RoadIndex,
+    bp: JunctionBluePrint,
+) -> Entity {
     let (center, connections) = (bp.center, bp.connections);
     let junction_e = commands.spawn(Junction { center }).id();
 
@@ -420,6 +428,8 @@ fn spawn_junction(mut commands: &mut Commands, road_index: &mut RoadIndex, bp: J
         commands.entity(junction_e).add_child(path_e);
         commands.entity(path_e).set_parent(junction_e);
     }
+    road_index.add_junction(junction_e);
+    junction_e
 }
 
 fn build_road_system(
