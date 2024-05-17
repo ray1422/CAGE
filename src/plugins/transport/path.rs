@@ -17,6 +17,11 @@ pub struct PathNext {
     pub next: Entity,
 }
 
+#[derive(Component)]
+pub struct PathPrev {
+    pub prev: Entity,
+}
+
 impl Default for Path {
     fn default() -> Self {
         Self {
@@ -60,14 +65,27 @@ pub fn show_debug_path(paths: Query<&Path>, mut gizmos: Gizmos) {
     }
 }
 
-/// add next entity to |path_e|. return next_path_e
-pub fn add_next(commands: &mut Commands, path_e: Entity, next_path_e: Entity) -> Option<Entity> {
-    commands.get_entity(path_e).and_then(|mut path_ec| {
-        let next = path_ec
-            .commands()
-            .spawn(PathNext { next: next_path_e })
-            .id();
-        path_ec.add_child(next);
-        Some(next)
-    })
+/// add next entity to |path_e|. return next_path_e and reversed prev entity
+pub fn link_next(
+    commands: &mut Commands,
+    path_e: Entity,
+    dst_path_e: Entity,
+) -> Option<(Entity, Entity)> {
+    commands
+        .get_entity(path_e)
+        .and_then(|mut path_ec| {
+            let next = path_ec
+                .commands()
+                .spawn(PathNext { next: dst_path_e })
+                .set_parent(path_e)
+                .id();
+            path_ec.add_child(next);
+
+            Some(next)
+        })
+        .and_then(|next_ret| commands.get_entity(dst_path_e).map(|e| (next_ret, e)))
+        .and_then(|(next_ret, mut dst_path_ec)| {
+            let prev = dst_path_ec.commands().spawn(PathPrev { prev: path_e }).id();
+            Some((next_ret, prev))
+        })
 }
