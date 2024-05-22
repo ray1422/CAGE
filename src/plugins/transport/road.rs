@@ -1,10 +1,11 @@
-use std::{cmp::Ordering, vec};
-
+use anyhow::Result;
+use anyhow::anyhow;
 use bevy::{
     prelude::*,
     utils::{HashMap, HashSet},
 };
 use cage::core::math::curve::{quadratic::QuadraticBezierCurve, Curve};
+use std::{cmp::Ordering, vec};
 
 use crate::plugins::{camera::Ground, transport::path::Path};
 
@@ -138,7 +139,7 @@ impl JunctionBluePrint {
 fn split_road(
     bp: RoadBlueprint,
     at: Vec3,
-) -> Result<(RoadBlueprint, JunctionBluePrint, RoadBlueprint), ()> {
+) -> Result<(RoadBlueprint, JunctionBluePrint, RoadBlueprint)> {
     let curve = bp.event.center;
     let (curve_a, curve_b) = curve.split_at(at);
 
@@ -195,7 +196,7 @@ fn split_road_with_existing_junction(
     bp: RoadBlueprint,
     mut junction_bp: JunctionBluePrint,
     at: Vec3,
-) -> Result<(RoadBlueprint, JunctionBluePrint, RoadBlueprint), ()> {
+) -> Result<(RoadBlueprint, JunctionBluePrint, RoadBlueprint)> {
     let curve = bp.event.center;
     let (curve_a, curve_b) = curve.split_at(at);
 
@@ -223,12 +224,6 @@ fn split_road_with_existing_junction(
         let (curve_a, curve_b) = path.curve.split_at(at);
         let curve_a = curve_a.slice_by_length(0.0, curve_a.length() - bp.event.width / 2.)?;
         let curve_b = curve_b.slice_by_length(bp.event.width / 2., curve_b.length())?;
-        let junction_curve = Curve::form_two_velocity(
-            curve_a.end(),
-            curve_a.velocity(1.0),
-            curve_b.start(),
-            curve_b.velocity(0.0),
-        );
         road_a_bp.paths.push((
             from_e,
             Path {
@@ -264,9 +259,9 @@ fn connect_road_in_junction(
     v: Vec3,
     q: Vec3,
     u: Vec3,
-) -> Result<(), ()> {
-    let curve = Curve::form_two_velocity(p, v, q, u);
-    commands.get_entity(junction_e).map_or(Err(()), |mut j_ec| {
+) -> Result<()> {
+    let curve = Curve::form_two_velocity(p, v, q, u)?;
+    commands.get_entity(junction_e).map_or(Err(anyhow!("entity not found")), |mut j_ec| {
         j_ec.with_children(|parent| {
             parent.spawn(Path {
                 curve,
@@ -282,7 +277,7 @@ fn connect_road_in_junction(
 fn spawn_junction_full_connections(
     incoming_groups: Vec<Vec<Path>>,
     outgoing_groups: Vec<Vec<Path>>,
-) -> HashMap<(usize, usize, usize, usize), Path> {
+) -> Result<HashMap<(usize, usize, usize, usize), Path>> {
     let mut ret = HashMap::<(usize, usize, usize, usize), Path>::new();
     for (i, ips) in incoming_groups.iter().enumerate() {
         for (o, ops) in outgoing_groups.iter().enumerate() {
@@ -296,7 +291,7 @@ fn spawn_junction_full_connections(
                                 ip.curve.velocity(1.0),
                                 op.curve.start(),
                                 op.curve.velocity(0.0),
-                            ),
+                            )?,
                             ..default()
                         },
                     );
@@ -304,7 +299,7 @@ fn spawn_junction_full_connections(
             }
         }
     }
-    ret
+    Ok(ret)
 }
 
 /// this function despawn old entities and spawn new entities replacing collision roads with
@@ -313,7 +308,7 @@ fn spawn_split_collision_roads(
     mut commands: &mut Commands,
     roads: Vec<RoadBlueprint>,
     mut road_index: &mut ResMut<RoadIndex>,
-) -> Result<(), ()> {
+) -> Result<()> {
     let mut new_roads: Vec<RoadBlueprint> = vec![];
     for road in roads.into_iter() {
         let mut rm_idx = HashSet::<usize>::new();
@@ -351,7 +346,7 @@ fn spawn_split_collision_roads(
 
                 // generate paths to connect paths_a to b, d
                 // generate paths to connect paths_c to b, d
-                let ret = spawn_junction_full_connections(rg1, rg2);
+                let ret = spawn_junction_full_connections(rg1, rg2)?;
                 let i_roads = [road_a_e, road_c_e];
                 let o_roads = [road_b_e, road_d_e];
                 let i_paths = [paths_a_e, paths_c_e];
@@ -401,8 +396,8 @@ fn spawn_road(
         let path_e = commands.spawn(path).set_parent(road_e).id();
         commands.entity(road_e).add_child(path_e);
         paths_entities.push(path_e);
-        from_e.and_then(|from_e| path::link_next(&mut commands, from_e, path_e));
-        next_e.and_then(|next_e| path::link_next(&mut commands, path_e, next_e));
+        from_e.and_then(|from_e| path::link_next(&mut commands, from_e, 1.0, path_e, 0.0));
+        next_e.and_then(|next_e| path::link_next(&mut commands, path_e, 1.0, next_e, 0.0));
     }
 
     road_index.add_road(road_e);
@@ -423,8 +418,10 @@ fn spawn_junction(
 
     for (from_path_e, path, next_path_e) in connections {
         let path_e = commands.spawn(path).set_parent(junction_e).id();
-        next_path_e.and_then(|next_path_e| path::link_next(&mut commands, path_e, next_path_e));
-        from_path_e.and_then(|from_path_e| path::link_next(&mut commands, from_path_e, path_e));
+        next_path_e
+            .and_then(|next_path_e| path::link_next(&mut commands, path_e, 1.0, next_path_e, 0.0));
+        from_path_e
+            .and_then(|from_path_e| path::link_next(&mut commands, from_path_e, 1.0, path_e, 0.0));
         commands.entity(junction_e).add_child(path_e);
         commands.entity(path_e).set_parent(junction_e);
     }

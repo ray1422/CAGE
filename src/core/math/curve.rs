@@ -1,4 +1,5 @@
 use std::cmp::min;
+use anyhow::{anyhow, Result};
 
 use bevy::math::{vec3, Vec3};
 
@@ -34,22 +35,26 @@ impl Curve {
         self.split_at(start_pt).1.split_at(end_pt).0
     }
 
-    pub fn slice_by_length(&self, start: f32, end: f32) -> Result<Self, ()> {
+    pub fn slice_by_length(&self, start: f32, end: f32) -> Result<Self> {
         let start = start / self.length();
         let end = end / self.length();
         if start >= end {
-            return Err(());
+            return Err(anyhow!("start should be less than end"));
         }
         Ok(self.slice(start, end))
     }
 
-    pub fn form_two_velocity(p: Vec3, v: Vec3, q: Vec3, u: Vec3) -> Self {
+    pub fn form_two_velocity(p: Vec3, v: Vec3, q: Vec3, u: Vec3) -> Result<Self> {
         let len = (q - p).length();
         let p0 = p;
         let p1 = p + v.normalize() * len / 3.0;
         let p2 = q - u.normalize() * len / 3.0;
         let p3 = q;
-        Self::from_4_points(p0, p1, p2, p3)
+        if p1.is_nan() || p2.is_nan() || p0.is_nan() || p3.is_nan() {
+            Err(anyhow!("nan found in form_two_velocity, {:?}", (p0, p1, p2, p3)))
+        } else {
+            Ok(Self::from_4_points(p0, p1, p2, p3))
+        }
     }
 
     // construct a curve that smoothly connects the two curves from 4 points

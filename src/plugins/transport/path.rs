@@ -1,6 +1,8 @@
 use bevy::prelude::*;
 use cage::core::math::curve::{quadratic::QuadraticBezierCurve, Curve};
 
+use super::path_op::{schedule_intents, PathLockIndex};
+
 #[derive(Component, Debug, Clone)]
 pub struct Path {
     pub curve: Curve,
@@ -8,18 +10,36 @@ pub struct Path {
     pub left: Option<Entity>,
     // right Path entity
     pub right: Option<Entity>,
-    // locks and owners
-    pub locks: Vec<PathLock>,
+}
+impl Path {
+    pub fn new(curve: Curve) -> Self {
+        Self {
+            curve,
+            left: None,
+            right: None,
+        }
+    }
+    pub fn length(&self) -> f32 {
+        self.curve.length()
+    }
 }
 
 #[derive(Component, Debug, Clone)]
 pub struct PathNext {
+    /// keep driving until |this_until| on this path
+    this_until: f32,
     pub next: Entity,
+    /// after |this_to|, start driving from |next_from| on next path
+    next_from: f32,
 }
 
 #[derive(Component)]
 pub struct PathPrev {
+    /// the point that starts driving on this path
+    this_from: f32,
     pub prev: Entity,
+    /// the point that ends driving on prev path
+    prev_until: f32,
 }
 
 impl Default for Path {
@@ -29,26 +49,8 @@ impl Default for Path {
             curve: QuadraticBezierCurve::new([Vec3::ZERO, Vec3::ZERO, Vec3::ZERO]).to_curve(),
             left: None,
             right: None,
-            locks: Vec::new(),
         }
     }
-}
-
-#[derive(Debug, Clone)]
-pub enum PathLockStatus {
-    Pending,
-    Locked,
-}
-
-#[derive(Component, Debug, Clone)]
-pub struct PathLock {
-    pub priority: i16,
-    pub status: PathLockStatus,
-    pub owner: Entity,
-    // timestamp of ms when the path is locked
-    // pub est_available_in: u64,
-    pub start: f32,
-    pub end: f32,
 }
 
 pub fn show_debug_path(paths: Query<&Path>, mut gizmos: Gizmos) {
@@ -69,14 +71,20 @@ pub fn show_debug_path(paths: Query<&Path>, mut gizmos: Gizmos) {
 pub fn link_next(
     commands: &mut Commands,
     path_e: Entity,
+    this_until: f32,
     dst_path_e: Entity,
+    next_from: f32,
 ) -> Option<(Entity, Entity)> {
     commands
         .get_entity(path_e)
         .and_then(|mut path_ec| {
             let next = path_ec
                 .commands()
-                .spawn(PathNext { next: dst_path_e })
+                .spawn(PathNext {
+                    next: dst_path_e,
+                    this_until,
+                    next_from,
+                })
                 .set_parent(path_e)
                 .id();
             path_ec.add_child(next);
@@ -85,7 +93,25 @@ pub fn link_next(
         })
         .and_then(|next_ret| commands.get_entity(dst_path_e).map(|e| (next_ret, e)))
         .and_then(|(next_ret, mut dst_path_ec)| {
-            let prev = dst_path_ec.commands().spawn(PathPrev { prev: path_e }).id();
+            let prev = dst_path_ec
+                .commands()
+                .spawn(PathPrev {
+                    prev: path_e,
+                    this_from: next_from,
+                    prev_until: this_until,
+                })
+                .id();
             Some((next_ret, prev))
         })
+}
+
+pub struct PathPlugin;
+
+impl Plugin for PathPlugin {
+    fn build(&self, app: &mut App) {
+        app.insert_resource(PathLockIndex::new())
+            .add_systems(Update, schedule_intents);
+        // app.add_startup_system(test_setup_path.system())
+        //     .add_system(show_debug_path.system());
+    }
 }

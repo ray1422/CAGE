@@ -214,6 +214,9 @@ impl QuadraticBezierCurve {
                 "nan!!! p0: {:?}, p1: {:?}, p2: {:?}, t: {:?}",
                 p0, p1, p2, t
             );
+            if p0.is_nan() || p1.is_nan() || p2.is_nan() || t.is_nan() {
+                panic!("nan!!!");
+            }
             // TODO: report this error
             1e-6
         } else {

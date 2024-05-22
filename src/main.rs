@@ -6,8 +6,8 @@ mod plugins;
 use cage::core::math::curve::Curve;
 use plugins::{
     transport::{
-        car::{drive_car, test_setup_car_and_path},
-        path::show_debug_path, road::RoadBuildingPlugin,
+        car::{car_intent, car_move, test_setup_car_and_path},
+        path::{show_debug_path, PathPlugin}, road::RoadBuildingPlugin,
     },
     CageCameraPlugin, RoadPlugin, /*RoadPlugin*/
 };
@@ -69,7 +69,7 @@ fn test_system(mut gizmos: Gizmos) {
     let u = curve_2.velocity(0.7);
     // point p to q
     gizmos.line(p, q, Color::YELLOW);
-    let new_curve = Curve::form_two_velocity(p, v, q, u);
+    let new_curve = Curve::form_two_velocity(p, v, q, u).unwrap();
     // plot new curve
     new_curve
         .iter_positions(1024)
@@ -97,11 +97,12 @@ fn test_system(mut gizmos: Gizmos) {
 fn main() {
     App::new()
         .add_plugins(DefaultPlugins)
+        .add_plugins(PathPlugin)
         // .add_systems(Startup, test_mesh)
         .add_systems(Startup, test_setup_car_and_path)
         // .add_systems(Update, test_system)
         .add_systems(Update, show_debug_path)
-        .add_systems(Update, drive_car)
+        .add_systems(Update, (car_intent, car_move))
         .add_plugins(CageCameraPlugin)
         .add_plugins(RoadPlugin)
         .add_plugins(RoadBuildingPlugin)

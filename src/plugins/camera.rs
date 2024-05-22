@@ -188,7 +188,7 @@ fn update_momentum(
 
 /// Spawn a camera like this
 fn spawn_camera(mut commands: Commands) {
-    let translation = Vec3::new(-2.0, 2.5, 5.0);
+    let translation = Vec3::new(-2.0, 60., 5.0);
     let radius = translation.length();
 
     commands.spawn((
