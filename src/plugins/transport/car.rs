@@ -1,3 +1,5 @@
+use std::collections::VecDeque;
+
 use bevy::{
     math::Vec3, pbr::PbrBundle, prelude::*, render::mesh::Mesh, time::Time, utils::HashSet,
 };
@@ -19,7 +21,7 @@ pub struct Car {
     acceleration: f32,
     acc_max: f32,
     // entity of (pathSlice, Option<lock group>)
-    pub path_slices: Vec<Entity>,
+    pub path_slices: VecDeque<Entity>,
 }
 
 #[derive(Bundle)]
@@ -56,13 +58,13 @@ fn update_one_car_intent(
         let ps_len = ps.length();
         if ps_len <= dist {
             dist -= ps_len;
-            intent.path_locks.push(PathSliceLock {
+            intent.path_locks.push_back(PathSliceLock {
                 path_slice: ps.clone(),
                 lock_together,
                 is_main_path: true,
             });
         } else {
-            intent.path_locks.push(PathSliceLock {
+            intent.path_locks.push_back(PathSliceLock {
                 path_slice: PathSlice::new(
                     ps.path_e,
                     ps.start,
@@ -81,7 +83,7 @@ fn update_one_car_intent(
                     continue;
                 }
                 let (lock, _) = lock.unwrap();
-                intent.path_locks.push(PathSliceLock {
+                intent.path_locks.push_back(PathSliceLock {
                     path_slice: lock.clone(),
                     lock_together,
                     is_main_path: false,
@@ -138,13 +140,13 @@ fn digest_approved_intent(
         let path_lock = &mut intent.path_locks.get_mut(0).unwrap();
         let path_slice = &mut path_lock.path_slice;
         if path_slice.length() <= dist || path_lock.lock_together {
-            let path_lock = intent.path_locks.remove(0);
+            let path_lock = intent.path_locks.pop_front().unwrap();
             if path_lock.is_main_path {
                 dist -= path_lock.path_slice.length();
                 remove_car_path(car, &path_lock.path_slice, &mut path_slice_query);
             }
 
-            lock.locks.push(path_lock);
+            lock.locks.push_back(path_lock);
             continue;
         } else {
             let new_start = path_slice.parent_t_of_length(dist);
@@ -157,7 +159,7 @@ fn digest_approved_intent(
                 path_slice.parent_curve.clone(),
             );
             remove_car_path(car, &new_path_slice, &mut path_slice_query);
-            lock.locks.push(PathSliceLock {
+            lock.locks.push_back(PathSliceLock {
                 path_slice: new_path_slice,
                 is_main_path: path_lock.is_main_path,
                 lock_together: false,
@@ -290,7 +292,7 @@ pub fn car_move(
             let path_slice = &mut lock.path_slice;
             if path_slice.length() <= distance {
                 // println!("!!! [move] lock of path_slice removed: {:?}", path_slice);
-                let path_slice = locked_path_slices.locks.remove(idx_offset).path_slice;
+                let path_slice = locked_path_slices.locks.remove(idx_offset).unwrap().path_slice;
                 position = path_slice.position(1.0);
                 distance -= path_slice.length();
             } else {
@@ -379,19 +381,19 @@ pub fn test_setup_car_and_path(
         let slice_e = PathSlice::new(path_e, 0.0, 0.02, curve_e.clone());
         let slice_f = PathSlice::new(path_e, 0.02, 1.0, curve_e.clone());
         let mut spawn = |s| commands.spawn(s).id();
-        let car_a_slices = vec![
+        let car_a_slices = VecDeque::from(vec![
             spawn(slice_a.clone()),
             spawn(slice_b.clone()),
             spawn(slice_e.clone()),
             spawn(slice_f.clone()),
-        ];
+        ]);
 
-        let car_b_slices = vec![
+        let car_b_slices = VecDeque::from(vec![
             spawn(slice_c.clone()),
             spawn(slice_d.clone()),
             spawn(slice_e.clone()),
             spawn(slice_f.clone()),
-        ];
+        ]);
 
         let lock_group_a = vec![
             spawn(slice_b.clone()),
@@ -415,17 +417,17 @@ pub fn test_setup_car_and_path(
         ];
 
         commands.entity(car_a_slices[1]).insert(PathLockTogether {
-            path_slices_e: lock_group_a,
+            path_slices_e: lock_group_a.into(),
         });
         commands.entity(car_a_slices[2]).insert(PathLockTogether {
-            path_slices_e: lock_group_b,
+            path_slices_e: lock_group_b.into(),
         });
 
         commands.entity(car_b_slices[1]).insert(PathLockTogether {
-            path_slices_e: lock_group_c,
+            path_slices_e: lock_group_c.into(),
         });
         commands.entity(car_b_slices[2]).insert(PathLockTogether {
-            path_slices_e: lock_group_d,
+            path_slices_e: lock_group_d.into(),
         });
 
         // car on path_a

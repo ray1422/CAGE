@@ -1,4 +1,4 @@
-use std::borrow::BorrowMut;
+use std::{borrow::BorrowMut, collections::VecDeque};
 
 use bevy::{prelude::*, utils::HashSet};
 use cage::core::math::curve::Curve;
@@ -52,7 +52,7 @@ impl PartialEq for PathSlice {
 
 #[derive(Component, Debug, Clone)]
 pub struct PathLockTogether {
-    pub path_slices_e: Vec<Entity>,
+    pub path_slices_e: VecDeque<Entity>,
 }
 #[derive(Component, Debug, Clone)]
 pub struct PathSliceLock {
@@ -63,7 +63,7 @@ pub struct PathSliceLock {
 
 #[derive(Debug, Clone, Component)]
 pub struct PathIntent {
-    pub path_locks: Vec<PathSliceLock>,
+    pub path_locks: VecDeque<PathSliceLock>,
     /// if the paths can be trimmed from the end
     pub priority: i16,
     /// ms when the intent is available
@@ -74,7 +74,7 @@ pub struct PathIntent {
 impl PathIntent {
     pub fn empty() -> Self {
         Self {
-            path_locks: Vec::new(),
+            path_locks: VecDeque::new(),
             priority: 0,
             est_available_at: 0,
             last_update: 0.0,
@@ -88,14 +88,14 @@ pub struct PathIntentApproved {}
 
 #[derive(Debug, Clone, Component)]
 pub struct PathSlicesLocked {
-    pub locks: Vec<PathSliceLock>,
+    pub locks: VecDeque<PathSliceLock>,
     pub est_available_at: u64,
 }
 
 impl PathSlicesLocked {
     pub fn empty() -> Self {
         Self {
-            locks: Vec::new(),
+            locks: VecDeque::new(),
             est_available_at: 0,
         }
     }
@@ -131,11 +131,11 @@ pub fn trim_lock(lock: &mut PathSliceLock, until: f32) -> bool {
     true
 }
 
-fn pop_locks_until_no_group(locks: &mut Vec<PathSliceLock>) {
-    while let Some(lock) = locks.last() {
+fn pop_locks_until_no_group(locks: &mut VecDeque<PathSliceLock>) {
+    while let Some(lock) = locks.back() {
         if lock.lock_together {
             println!("pop lock {:?}", lock);
-            locks.pop();
+            locks.pop_back();
         } else {
             break;
         }
@@ -148,7 +148,7 @@ pub fn schedule_intents(
     mut intents: Query<(Entity, &mut PathIntent), Without<PathIntentApproved>>,
     locked_path_slices: Query<(Entity, &PathSlicesLocked)>,
 ) {
-    let mut pending_intents: Vec<(Entity, PathIntent)> = vec![];
+    let mut pending_intents: VecDeque<(Entity, PathIntent)> = VecDeque::new();
 
     'intents: for (intent_e, mut intent) in intents.iter_mut() {
         for lock in locked_path_slices.iter() {
@@ -226,7 +226,7 @@ pub fn schedule_intents(
                 }
             }
         }
-        pending_intents.push((intent_e, intent.clone()));
+        pending_intents.push_back((intent_e, intent.clone()));
     }
 
     for (intent_e, intent) in pending_intents {
