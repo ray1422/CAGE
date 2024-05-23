@@ -6,8 +6,9 @@ mod plugins;
 use cage::core::math::curve::Curve;
 use plugins::{
     transport::{
-        car::{car_intent, car_move, test_setup_car_and_path},
-        path::{show_debug_path, PathPlugin}, road::RoadBuildingPlugin,
+        car::{car_intents_lock, car_intent_update, car_move, test_setup_car_and_path},
+        path::{show_debug_path, PathPlugin},
+        road::RoadBuildingPlugin,
     },
     CageCameraPlugin, RoadPlugin, /*RoadPlugin*/
 };
@@ -102,7 +103,7 @@ fn main() {
         .add_systems(Startup, test_setup_car_and_path)
         // .add_systems(Update, test_system)
         .add_systems(Update, show_debug_path)
-        .add_systems(Update, (car_intent, car_move))
+        .add_systems(Update, (car_intents_lock, car_move, car_intent_update))
         .add_plugins(CageCameraPlugin)
         .add_plugins(RoadPlugin)
         .add_plugins(RoadBuildingPlugin)

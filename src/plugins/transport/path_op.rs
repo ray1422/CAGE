@@ -1,5 +1,8 @@
+use std::borrow::BorrowMut;
+
 use bevy::{prelude::*, utils::HashSet};
 use cage::core::math::curve::Curve;
+use rand::prelude::*;
 
 /// PathSlice is a slice of a path
 /// used in intent and lock operations
@@ -30,7 +33,7 @@ impl PathSlice {
     }
 
     pub fn t_of_length(&self, length: f32) -> f32 {
-        length / self.length()
+        length / (self.length())
     }
 
     pub fn position(&self, progress: f32) -> Vec3 {
@@ -65,15 +68,16 @@ pub struct PathIntent {
     pub priority: i16,
     /// ms when the intent is available
     pub est_available_at: u64,
+    pub last_update: f32,
 }
 
 impl PathIntent {
     pub fn empty() -> Self {
         Self {
             path_locks: Vec::new(),
-
             priority: 0,
             est_available_at: 0,
+            last_update: 0.0,
         }
     }
 }
@@ -112,49 +116,80 @@ impl PathLockIndex {
     }
 }
 
+pub fn trim_lock(lock: &mut PathSliceLock, until: f32) -> bool {
+    if lock.lock_together {
+        return false;
+    }
+    if lock.path_slice.start >= until {
+        return false;
+    }
+    if lock.path_slice.end <= until {
+        // shouldn't happen
+        return true;
+    }
+    lock.path_slice.end = until;
+    true
+}
+
+fn pop_locks_until_no_group(locks: &mut Vec<PathSliceLock>) {
+    while let Some(lock) = locks.last() {
+        if lock.lock_together {
+            println!("pop lock {:?}", lock);
+            locks.pop();
+        } else {
+            break;
+        }
+    }
+}
+
 pub fn schedule_intents(
     mut commands: Commands,
-    mut lock_index: ResMut<PathLockIndex>,
+    mut lock_index: ResMut<PathLockIndex>, // TODO: use this index the entities
     mut intents: Query<(Entity, &mut PathIntent), Without<PathIntentApproved>>,
-    approved_intents: Query<(Entity, &mut PathIntent), With<PathIntentApproved>>,
-    // approved intents can't be changed
     locked_path_slices: Query<(Entity, &PathSlicesLocked)>,
 ) {
     let mut pending_intents: Vec<(Entity, PathIntent)> = vec![];
-    let mut pop_set_pending = HashSet::<Entity>::new();
-    for (intent_e, mut intent) in intents.iter_mut() {
-        // // FIXME: test code
-        // commands.get_entity(intent_e).and_then(|mut e| {
-        //     e.insert(PathIntentApproved {});
-        //     Some(e)
-        // });
-        // continue;
-        let mut can_approve = true;
+
+    'intents: for (intent_e, mut intent) in intents.iter_mut() {
         for lock in locked_path_slices.iter() {
             if lock.0 == intent_e {
                 continue;
             }
-            for path_lock in intent.path_locks.iter() {
-                for locked_path_slice in lock.1.locks.iter() {
-                    if path_lock.path_slice.path_e == locked_path_slice.path_slice.path_e {
-                        if path_lock.path_slice.start < locked_path_slice.path_slice.end
-                            && path_lock.path_slice.end > locked_path_slice.path_slice.start
-                        {
-                            can_approve = false;
-                            break;
+            if intent.path_locks.is_empty() {
+                break;
+            }
+            for locked_path_slice in lock.1.locks.iter() {
+                if intent.path_locks.is_empty() {
+                    break;
+                }
+                for (j, path_lock) in intent.path_locks.iter_mut().enumerate() {
+                    if path_lock.path_slice.path_e != locked_path_slice.path_slice.path_e {
+                        continue;
+                    }
+                    if path_lock.path_slice.start < locked_path_slice.path_slice.end
+                        && path_lock.path_slice.end > locked_path_slice.path_slice.start
+                    {
+                        // continue 'm;
+                        if trim_lock(path_lock, locked_path_slice.path_slice.start) {
+                            intent.path_locks.truncate(j + 1);
+                        } else {
+                            intent.path_locks.truncate(j);
+                            pop_locks_until_no_group(&mut intent.path_locks);
                         }
+                        break;
                     }
                 }
             }
         }
-        if !can_approve {
+        if intent.path_locks.is_empty() {
             continue;
         }
-
-        'other_intents: for (other_e, other_intent) in pending_intents.iter() {
-            #[allow(unused_labels)]
-            'self_locks: for lock in intent.path_locks.iter() {
-                'other_locks: for other_lock in other_intent.path_locks.iter() {
+        let intent_priority = intent.priority;
+        'other_intents: for (other_e, other_intent) in pending_intents.iter_mut() {
+            let other_priority = other_intent.priority;
+            'self_lock: for (i, lock) in intent.path_locks.iter_mut().enumerate() {
+                'other_locks: for (j, other_lock) in other_intent.path_locks.iter_mut().enumerate()
+                {
                     let ps = &lock.path_slice;
                     let other_ps = &other_lock.path_slice;
                     if ps.path_e != other_ps.path_e {
@@ -164,28 +199,40 @@ pub fn schedule_intents(
                         // no overlap
                         continue;
                     }
+                    let mut tmp_other_priority = other_priority;
                     // overlap
-                    if other_intent.priority > intent.priority {
+                    if tmp_other_priority == intent_priority {
+                        // other_priority + or - 1 randomly
+                        tmp_other_priority += if rand::random() { 1 } else { -1 };
+                    }
+                    if tmp_other_priority > intent_priority {
                         // other has higher priority
-                        pop_set_pending.insert(intent_e);
-                        break 'other_intents;
+                        if trim_lock(lock, other_ps.start) {
+                            intent.path_locks.truncate(i + 1);
+                        } else {
+                            intent.path_locks.truncate(i);
+                            pop_locks_until_no_group(&mut intent.path_locks);
+                        }
+                        break 'self_lock;
                     } else {
-                        // this has higher priority
-                        pop_set_pending.insert(*other_e);
-                        break 'other_locks;
+                        if trim_lock(other_lock, ps.start) {
+                            other_intent.path_locks.truncate(j + 1);
+                        } else {
+                            other_intent.path_locks.truncate(j);
+                            pop_locks_until_no_group(&mut other_intent.path_locks);
+                        }
+                        break 'other_intents;
                     }
                 }
             }
         }
         pending_intents.push((intent_e, intent.clone()));
-        pending_intents.retain(|(e, _)| !pop_set_pending.contains(e));
     }
 
-    for (intent_e, intent) in pending_intents.iter() {
-        commands.get_entity(*intent_e).and_then(|mut e| {
-            println!("approved intent: {:?}, {:?}", intent_e, intent);
-            e.insert(PathIntentApproved {});
-            Some(e)
-        });
+    for (intent_e, intent) in pending_intents {
+        // println!("approved intent {:?} {:#?}", intent_e, intent);
+        commands.entity(intent_e).insert(intent);
+        commands.entity(intent_e).insert(PathIntentApproved {});
+        lock_index.intents.insert(intent_e);
     }
 }

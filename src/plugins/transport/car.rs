@@ -1,5 +1,3 @@
-use std::io::Read;
-
 use bevy::{
     math::Vec3, pbr::PbrBundle, prelude::*, render::mesh::Mesh, time::Time, utils::HashSet,
 };
@@ -15,9 +13,11 @@ use super::{
 
 #[derive(Component, Debug)]
 pub struct Car {
+    length: f32,
     speed: f32,
     last_position: Vec3,
     acceleration: f32,
+    acc_max: f32,
     // entity of (pathSlice, Option<lock group>)
     pub path_slices: Vec<Entity>,
 }
@@ -30,7 +30,7 @@ pub struct CarBundle {
     pbr: PbrBundle,
 }
 
-fn update_car_intent(
+fn update_one_car_intent(
     car: &Car,
     intent: &mut Mut<PathIntent>,
     path_slices_query: &mut Query<(&mut PathSlice, Option<&PathLockTogether>)>,
@@ -97,31 +97,27 @@ fn remove_car_path(
     path_slice_query: &mut Query<&mut PathSlice>,
 ) {
     let mut pop_e = HashSet::<Entity>::new();
-    println!("paths: {:?} ", car.path_slices);
+    // println!("paths: {:?} ", car.path_slices);
     for (i, car_ps_e) in car.path_slices.iter_mut().enumerate() {
         let mut car_ps = path_slice_query.get_mut(*car_ps_e).unwrap();
-        if path_slice.eq(&car_ps) {
-            car.path_slices.remove(i);
-            println!("path_slice removed (eq): {:?} ", path_slice);
-            break;
+        if car_ps.path_e != path_slice.path_e {
+            continue;
         }
-        if path_slice.path_e == car_ps.path_e {
-            if car_ps.start < path_slice.start && car_ps.end > path_slice.end {
-                println!("!!!!! this shouldn't happen!!!!!!!");
-            } else if car_ps.end <= path_slice.start && car_ps.start >= path_slice.end {
-                pop_e.insert(*car_ps_e);
-                println!("path_slice: removed: {:?} ", car_ps);
-            } else if car_ps.start < path_slice.end {
-                // std::io::stdin().bytes().next();
-                car_ps.start = path_slice.end;
-                break;
-            }
+        if car_ps.end <= path_slice.end {
+            pop_e.insert(*car_ps_e);
+            // println!("path_slice: removed: {:?} ", car_ps);
+        } else if car_ps.start < path_slice.end {
+            car_ps.start = path_slice.end;
+            // println!("path_slice: trimmed: {:?} ", car_ps);
+        } else {
+            // nothing
         }
     }
+
     car.path_slices.retain(|e| !pop_e.contains(e));
 }
 
-const LOCKED_INTERVAL: f32 = 0.2;
+const LOCKED_INTERVAL: f32 = 10.5;
 
 fn digest_approved_intent(
     car: &mut Mut<Car>,
@@ -130,20 +126,26 @@ fn digest_approved_intent(
     mut path_slice_query: Query<&mut PathSlice>,
 ) {
     // digest next 1s approved intent, and then update insert into PathSlicesLocked
-    let mut dist = 0.1_f32.max(car.speed * 0.1).max(
-        0.5 * car.acceleration * LOCKED_INTERVAL * LOCKED_INTERVAL + car.speed * LOCKED_INTERVAL,
-    );
-    while dist > 0. {
+    let mut dist = 1.0_f32.max(car.speed * LOCKED_INTERVAL * 1.0)
+    // .max( 0.5 * car.acceleration * LOCKED_INTERVAL * LOCKED_INTERVAL + car.speed * LOCKED_INTERVAL) 
+    + car.length + 1.0;
+    while dist > 0.0
+        || (intent.path_locks.len() > 0 && intent.path_locks.get(0).unwrap().lock_together)
+    {
         if intent.path_locks.len() == 0 {
             break;
         }
         let path_lock = &mut intent.path_locks.get_mut(0).unwrap();
         let path_slice = &mut path_lock.path_slice;
-        if path_slice.length() <= dist {
-            dist -= path_slice.length();
+        if path_slice.length() <= dist || path_lock.lock_together {
             let path_lock = intent.path_locks.remove(0);
-            remove_car_path(car, &path_lock.path_slice, &mut path_slice_query);
+            if path_lock.is_main_path {
+                dist -= path_lock.path_slice.length();
+                remove_car_path(car, &path_lock.path_slice, &mut path_slice_query);
+            }
+
             lock.locks.push(path_lock);
+            continue;
         } else {
             let new_start = path_slice.parent_t_of_length(dist);
             assert!(new_start > path_slice.start);
@@ -167,7 +169,7 @@ fn digest_approved_intent(
     }
 }
 
-pub fn car_intent(
+pub fn car_intents_lock(
     mut commands: Commands,
     mut intent_query: Query<(
         Entity,
@@ -192,12 +194,27 @@ pub fn car_intent(
         } else {
             // println!("!!! not approved intent_query: {:?}", e);
         }
-        update_car_intent(&car, &mut intent, &mut path_slice_query);
+    }
+}
+
+pub fn car_intent_update(
+    time: Res<Time>,
+    mut cars: Query<(&Car, &mut PathIntent)>,
+    mut path_slices_query: Query<(&mut PathSlice, Option<&PathLockTogether>)>,
+) {
+    let now = time.elapsed_seconds();
+    for (car, mut intent) in cars.iter_mut() {
+        // TODO: update more frequently when locked length is not enough
+        if now - intent.last_update < 0.25 {
+            continue;
+        }
+        intent.last_update = now;
+        update_one_car_intent(&car, &mut intent, &mut path_slices_query);
     }
 }
 
 fn adjust_car_acceleration(car: &mut Mut<Car>, locks: &Mut<PathSlicesLocked>) {
-    let remain_dist = locks
+    let mut remain_dist = (locks
         .locks
         .iter()
         .filter_map(|lock| {
@@ -207,16 +224,33 @@ fn adjust_car_acceleration(car: &mut Mut<Car>, locks: &Mut<PathSlicesLocked>) {
                 None
             }
         })
-        .sum::<f32>();
-
-    const LOCKED_INTERVAL_ADJ: f32 = LOCKED_INTERVAL * 0.8;
-    // 100kph / 2s = 27.8m/s / 2s = 13.9m/s^2
-    let mut acc = 2.0 * (remain_dist - car.speed * LOCKED_INTERVAL_ADJ)
-        / (LOCKED_INTERVAL_ADJ * LOCKED_INTERVAL_ADJ).min(12.0 * LOCKED_INTERVAL);
-    // prevent car from Creeping too far
-    if car.speed < 1.5 && remain_dist > 0.5 {
-        acc = 5.0;
+        .sum::<f32>())
+    .max(0.0);
+    if remain_dist < car.length {
+        car.acceleration = 0.0;
+        car.speed = 0.0;
+        return;
     }
+
+    remain_dist -= car.length;
+
+    if remain_dist > car.speed * 1.0 {
+        // 前面很空就油門踩死
+        // accelerate to max if the front is clear
+        car.acceleration = car.acc_max;
+        return;
+    }
+
+    let mut locked_interval_adj: f32 = 1.0;
+    if remain_dist > 1.0 && car.speed < 2.0 {
+        locked_interval_adj *= 0.5;
+    }
+    // 100kph / 2s = 27.8m/s / 2s = 13.9m/s^2
+    let mut acc = 2.0 * (remain_dist - car.speed * locked_interval_adj)
+        / (locked_interval_adj * locked_interval_adj);
+
+    acc = acc.min(car.acc_max);
+
     // v0t + 0.5at^2 = s
     // => a = 2(s - v0t) / t^2
     car.acceleration = acc;
@@ -236,7 +270,8 @@ pub fn car_move(
         let mut locked_path_slices = locked_path_slices.unwrap();
         adjust_car_acceleration(&mut car, &locked_path_slices);
         car.speed += car.acceleration * time.delta_seconds();
-        car.speed = car.speed.min(10.0).max(0.0);
+        car.speed = car.speed.min(30.0).max(0.0);
+
         let mut distance = car.speed * time.delta_seconds();
         let mut position = car.last_position;
 
@@ -251,18 +286,16 @@ pub fn car_move(
                 idx_offset += 1;
                 continue;
             }
-            println!("!!! [move] lock of path_slice: {:?}", lock.path_slice);
+            // println!("!!! [move] lock of path_slice: {:?}", lock.path_slice);
             let path_slice = &mut lock.path_slice;
             if path_slice.length() <= distance {
-                println!("!!! [move] lock of path_slice removed: {:?}", path_slice);
+                // println!("!!! [move] lock of path_slice removed: {:?}", path_slice);
                 let path_slice = locked_path_slices.locks.remove(idx_offset).path_slice;
                 position = path_slice.position(1.0);
                 distance -= path_slice.length();
             } else {
-                // let progress = distance / path_slice.length() * (path_slice.end - path_slice.start);
                 position = path_slice.position(path_slice.t_of_length(distance));
                 path_slice.start = path_slice.parent_t_of_length(distance);
-
                 break;
             }
         }
@@ -280,7 +313,7 @@ pub fn car_move(
         let rotation = translate.looking_at(position, Vec3::Y);
         car.last_position = position;
         // align the car's front/center/bottom with the path
-        let shift = Transform::from_translation(Vec3::new(0.0, 0.5, 0.0));
+        let shift = Transform::from_translation(Vec3::new(0.0, 0.5, -0.8));
         *transform = rotation * shift;
     }
 }
@@ -293,8 +326,8 @@ pub fn test_setup_car_and_path(
 ) {
     let curve_a = QuadraticBezierCurve::new([
         Vec3::new(-9., 0.0, 9.0),
-        Vec3::new(-4.0, 0.0, 4.0),
-        Vec3::new(0.0, 0.0, 0.0),
+        Vec3::new(0.0, 0.0, 9.0),
+        Vec3::new(0.0, 0.0, 6.0),
     ])
     .to_curve();
 
@@ -308,8 +341,8 @@ pub fn test_setup_car_and_path(
 
     let curve_c = QuadraticBezierCurve::new([
         Vec3::new(9., 0.0, 9.0),
-        Vec3::new(4.0, 0.0, 4.0),
-        Vec3::new(0.0, 0.0, 0.0),
+        Vec3::new(0.0, 0.0, 9.0),
+        Vec3::new(0.0, 0.0, 6.0),
     ])
     .to_curve();
     let path_c = commands
@@ -320,9 +353,9 @@ pub fn test_setup_car_and_path(
         })
         .id();
     let curve_e = QuadraticBezierCurve::new([
+        Vec3::new(0.0, 0.0, 6.0),
         Vec3::new(0.0, 0.0, 0.0),
-        Vec3::new(0.0, 0.0, -2.0),
-        Vec3::new(0.0, 0.0, -9.0),
+        Vec3::new(0.0, 0.0, -29.0),
     ])
     .to_curve();
     let path_e = commands
@@ -336,105 +369,123 @@ pub fn test_setup_car_and_path(
     link_next(&mut commands, path_a, 1.0, path_e, 0.0);
     link_next(&mut commands, path_c, 1.0, path_e, 0.0);
 
-    let slice_a = PathSlice::new(path_a, 0.0, 0.5, curve_a.clone());
+    for i in 0..4 {
+        let slice_a = PathSlice::new(path_a, 0.0, 0.85, curve_a.clone());
+        let slice_b = PathSlice::new(path_a, 0.85, 1.0, curve_a.clone());
 
-    let slice_b = PathSlice::new(path_a, 0.5, 1.0, curve_a.clone());
+        let slice_c = PathSlice::new(path_c, 0.0, 0.85, curve_c.clone());
+        let slice_d = PathSlice::new(path_c, 0.85, 1.0, curve_c.clone());
 
-    let slice_c = PathSlice::new(path_c, 0.0, 0.5, curve_c.clone());
+        let slice_e = PathSlice::new(path_e, 0.0, 0.02, curve_e.clone());
+        let slice_f = PathSlice::new(path_e, 0.02, 1.0, curve_e.clone());
+        let mut spawn = |s| commands.spawn(s).id();
+        let car_a_slices = vec![
+            spawn(slice_a.clone()),
+            spawn(slice_b.clone()),
+            spawn(slice_e.clone()),
+            spawn(slice_f.clone()),
+        ];
 
-    let slice_d = PathSlice::new(path_c, 0.5, 1.0, curve_c.clone());
+        let car_b_slices = vec![
+            spawn(slice_c.clone()),
+            spawn(slice_d.clone()),
+            spawn(slice_e.clone()),
+            spawn(slice_f.clone()),
+        ];
 
-    let slice_e = PathSlice::new(path_e, 0.0, 0.5, curve_e.clone());
+        let lock_group_a = vec![
+            spawn(slice_b.clone()),
+            spawn(slice_d.clone()),
+            spawn(slice_e.clone()),
+        ];
+        let lock_group_b = vec![
+            spawn(slice_b.clone()),
+            spawn(slice_d.clone()),
+            spawn(slice_e.clone()),
+        ];
+        let lock_group_c = vec![
+            spawn(slice_b.clone()),
+            spawn(slice_d.clone()),
+            spawn(slice_e.clone()),
+        ];
+        let lock_group_d = vec![
+            spawn(slice_b.clone()),
+            spawn(slice_d.clone()),
+            spawn(slice_e.clone()),
+        ];
 
-    let slice_f = PathSlice::new(path_e, 0.5, 1.0, curve_e.clone());
-    let mut spawn = |s| commands.spawn(s).id();
-    let car_a_slices = vec![
-        spawn(slice_a.clone()),
-        spawn(slice_b.clone()),
-        spawn(slice_e.clone()),
-        spawn(slice_f.clone()),
-    ];
+        commands.entity(car_a_slices[1]).insert(PathLockTogether {
+            path_slices_e: lock_group_a,
+        });
+        commands.entity(car_a_slices[2]).insert(PathLockTogether {
+            path_slices_e: lock_group_b,
+        });
 
-    let car_b_slices = vec![
-        spawn(slice_c.clone()),
-        spawn(slice_d.clone()),
-        spawn(slice_e.clone()),
-        spawn(slice_f.clone()),
-    ];
+        commands.entity(car_b_slices[1]).insert(PathLockTogether {
+            path_slices_e: lock_group_c,
+        });
+        commands.entity(car_b_slices[2]).insert(PathLockTogether {
+            path_slices_e: lock_group_d,
+        });
 
-    let lock_group = vec![
-        spawn(slice_b.clone()),
-        spawn(slice_d.clone()),
-        spawn(slice_e.clone()),
-    ];
+        // car on path_a
+        let car_a_e = commands
+            .spawn(CarBundle {
+                // a cube
+                pbr: PbrBundle {
+                    mesh: meshes.add(Cuboid::new(1.0, 1.0, 2.0)),
+                    material: materials.add(Color::WHITE),
 
-    commands.entity(car_a_slices[1]).insert(PathLockTogether {
-        path_slices_e: lock_group.clone(),
-    });
-    commands.entity(car_a_slices[2]).insert(PathLockTogether {
-        path_slices_e: lock_group.clone(),
-    });
+                    transform: Transform::from_translation(Vec3::new(-9.0, 1.0, 999.0)),
+                    ..Default::default()
+                },
+                car: Car {
+                    length: 2.1,
+                    speed: 0.0,
+                    acceleration: 0.0,
+                    acc_max: 23.9 + rand::random::<f32>() * 5.0,
+                    path_slices: car_a_slices.clone(),
+                    last_position: Vec3::ONE * 999.0,
+                },
+                intent: PathIntent::empty(),
+                locks: PathSlicesLocked::empty(),
+            })
+            .id();
 
-    commands.entity(car_b_slices[1]).insert(PathLockTogether {
-        path_slices_e: lock_group.clone(),
-    });
-    commands.entity(car_b_slices[2]).insert(PathLockTogether {
-        path_slices_e: lock_group.clone(),
-    });
+        for path_slice_e in car_a_slices.iter() {
+            commands.entity(car_a_e).add_child(*path_slice_e);
+            commands.entity(*path_slice_e).set_parent(car_a_e);
+        }
+        // car on path_c
+        let car_b_e = commands
+            .spawn(CarBundle {
+                // a cube
+                pbr: PbrBundle {
+                    mesh: meshes.add(Cuboid::new(1.0, 1.0, 2.0)),
+                    material: materials.add(Color::WHITE),
 
-    // car on path_a
-    let car_a_e = commands
-        .spawn(CarBundle {
-            // a cube
-            pbr: PbrBundle {
-                mesh: meshes.add(Cuboid::new(1.0, 1.0, 2.0)),
-                material: materials.add(Color::WHITE),
+                    transform: Transform::from_xyz(999.0, 1.0, 0.0),
+                    ..Default::default()
+                },
+                car: Car {
+                    length: 2.1,
+                    speed: 0.,
+                    acceleration: 0.0,
+                    acc_max: 23.9 + rand::random::<f32>() * 5.0,
+                    path_slices: car_b_slices.clone(),
+                    last_position: Vec3::ONE * 999.,
+                },
+                intent: PathIntent::empty(),
+                locks: PathSlicesLocked::empty(),
+            })
+            .id();
 
-                transform: Transform::from_xyz(0.0, 1.0, 0.0),
-                ..Default::default()
-            },
-            car: Car {
-                speed: 0.0,
-                acceleration: 0.1,
-                path_slices: car_a_slices.clone(),
-                last_position: Vec3::ZERO,
-            },
-            intent: PathIntent::empty(),
-            locks: PathSlicesLocked::empty(),
-        })
-        .id();
+        for path_slice_e in car_b_slices.iter() {
+            commands.entity(car_b_e).add_child(*path_slice_e);
+            commands.entity(*path_slice_e).set_parent(car_b_e);
+        }
 
-    for path_slice_e in car_a_slices.iter() {
-        commands.entity(car_a_e).add_child(*path_slice_e);
-        commands.entity(*path_slice_e).set_parent(car_a_e);
+        lock_index.locked.insert(car_a_e);
+        lock_index.locked.insert(car_b_e);
     }
-    // car on path_c
-    let car_b_e = commands
-        .spawn(CarBundle {
-            // a cube
-            pbr: PbrBundle {
-                mesh: meshes.add(Cuboid::new(1.0, 1.0, 2.0)),
-                material: materials.add(Color::WHITE),
-
-                transform: Transform::from_xyz(0.0, 1.0, 0.0),
-                ..Default::default()
-            },
-            car: Car {
-                speed: 0.,
-                acceleration: 10.1,
-                path_slices: car_b_slices.clone(),
-                last_position: Vec3::ZERO,
-            },
-            intent: PathIntent::empty(),
-            locks: PathSlicesLocked::empty(),
-        })
-        .id();
-
-    for path_slice_e in car_b_slices.iter() {
-        commands.entity(car_b_e).add_child(*path_slice_e);
-        commands.entity(*path_slice_e).set_parent(car_b_e);
-    }
-
-    lock_index.locked.insert(car_a_e);
-    lock_index.locked.insert(car_b_e);
 }

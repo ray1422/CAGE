@@ -1220,6 +1220,7 @@ dependencies = [
  "anyhow",
  "bevy",
  "peroxide",
+ "rand",
  "thiserror",
 ]
 
