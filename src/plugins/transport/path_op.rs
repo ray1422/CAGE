@@ -1,6 +1,9 @@
 use std::{borrow::BorrowMut, collections::VecDeque};
 
-use bevy::{prelude::*, utils::HashSet};
+use bevy::{
+    prelude::*,
+    utils::{HashMap, HashSet},
+};
 use cage::core::math::curve::Curve;
 use rand::prelude::*;
 
@@ -103,16 +106,56 @@ impl PathSlicesLocked {
 
 #[derive(Debug, Clone, Resource)]
 pub struct PathLockIndex {
-    pub intents: HashSet<Entity>,
-    pub locked: HashSet<Entity>,
+    /// locked: path_e => (lock_e, idx of lock, lock)
+    index: HashMap<Entity, HashMap<Entity, Vec<(usize, PathSliceLock)>>>,
+    /// reverse_index: lock_e => Set(path_e)
+    reverse_index: HashMap<Entity, HashSet<Entity>>,
 }
 
 impl PathLockIndex {
     pub fn new() -> Self {
         Self {
-            intents: HashSet::new(),
-            locked: HashSet::new(),
+            index: HashMap::new(),
+            reverse_index: HashMap::new(),
         }
+    }
+
+    pub fn upsert_locks(&mut self, lock_e: &Entity, locks: impl Iterator<Item = PathSliceLock>) {
+        // remove old index
+        let path_es = self.reverse_index.remove(lock_e);
+        path_es
+            .into_iter()
+            .flat_map(|e| e.into_iter())
+            .for_each(|path_e| {
+                let path_mp = self.index.get_mut(&path_e).unwrap();
+                path_mp.remove(lock_e);
+            });
+        for (i, lock) in locks.enumerate() {
+            self.reverse_index
+                .entry(*lock_e)
+                .or_default()
+                .insert(lock.path_slice.path_e);
+            self.index
+                .entry(lock.path_slice.path_e)
+                .or_insert(HashMap::new())
+                .entry(*lock_e)
+                .or_insert(Vec::new())
+                .push((i, lock));
+        }
+    }
+
+    pub fn collections(
+        &self,
+        path_e: &Entity,
+        start: f32,
+        end: f32,
+    ) -> impl Iterator<Item = (Entity, usize, &PathSliceLock)> {
+        self.index
+            .get(path_e)
+            .into_iter()
+            .flat_map(|f| f.iter())
+            .flat_map(|(lock_e, locks)| locks.into_iter().map(|(i, lock)| (*lock_e, *i, lock)))
+            .filter(move |(_, _, lock)| lock.path_slice.start < end && lock.path_slice.end > start)
     }
 }
 
@@ -134,7 +177,6 @@ pub fn trim_lock(lock: &mut PathSliceLock, until: f32) -> bool {
 fn pop_locks_until_no_group(locks: &mut VecDeque<PathSliceLock>) {
     while let Some(lock) = locks.back() {
         if lock.lock_together {
-            println!("pop lock {:?}", lock);
             locks.pop_back();
         } else {
             break;
@@ -153,26 +195,29 @@ pub fn schedule_intents(
     for (intent_e, mut intent) in intents.iter_mut() {
         'l: loop {
             for (j, path_lock) in intent.path_locks.iter_mut().enumerate() {
-                for lock in locked_path_slices.iter() {
-                    if lock.0 == intent_e {
+                for (other_e, _, locked_path_slice) in lock_index.collections(
+                    &path_lock.path_slice.path_e,
+                    path_lock.path_slice.start,
+                    path_lock.path_slice.end,
+                ) {
+                    if other_e == intent_e {
                         continue;
                     }
-                    for locked_path_slice in lock.1.locks.iter() {
-                        if path_lock.path_slice.path_e != locked_path_slice.path_slice.path_e {
-                            continue;
+
+                    if path_lock.path_slice.path_e != locked_path_slice.path_slice.path_e {
+                        continue;
+                    }
+                    if path_lock.path_slice.start < locked_path_slice.path_slice.end
+                        && path_lock.path_slice.end > locked_path_slice.path_slice.start
+                    {
+                        // continue 'm;
+                        if trim_lock(path_lock, locked_path_slice.path_slice.start) {
+                            intent.path_locks.truncate(j + 1);
+                        } else {
+                            intent.path_locks.truncate(j);
+                            pop_locks_until_no_group(&mut intent.path_locks);
                         }
-                        if path_lock.path_slice.start < locked_path_slice.path_slice.end
-                            && path_lock.path_slice.end > locked_path_slice.path_slice.start
-                        {
-                            // continue 'm;
-                            if trim_lock(path_lock, locked_path_slice.path_slice.start) {
-                                intent.path_locks.truncate(j + 1);
-                            } else {
-                                intent.path_locks.truncate(j);
-                                pop_locks_until_no_group(&mut intent.path_locks);
-                            }
-                            continue 'l;
-                        }
+                        continue 'l;
                     }
                 }
             }
@@ -236,6 +281,5 @@ pub fn schedule_intents(
         // println!("approved intent {:?} {:#?}", intent_e, intent);
         commands.entity(intent_e).insert(intent);
         commands.entity(intent_e).insert(PathIntentApproved {});
-        lock_index.intents.insert(intent_e);
     }
 }

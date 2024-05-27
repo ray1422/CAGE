@@ -119,9 +119,11 @@ fn remove_car_path(
     car.path_slices.retain(|e| !pop_e.contains(e));
 }
 
-const LOCKED_INTERVAL: f32 = 0.2;
+const LOCKED_INTERVAL: f32 = 1.2;
 
 fn digest_approved_intent(
+    index: &mut ResMut<PathLockIndex>,
+    car_e: Entity,
     car: &mut Mut<Car>,
     intent: &mut Mut<PathIntent>,
     mut lock: Mut<PathSlicesLocked>,
@@ -169,10 +171,12 @@ fn digest_approved_intent(
             break;
         }
     }
+    index.upsert_locks(&car_e, lock.locks.iter().cloned());
 }
 
 pub fn car_intents_lock(
     mut commands: Commands,
+    mut index: ResMut<PathLockIndex>,
     mut intent_query: Query<(
         Entity,
         &mut Car,
@@ -188,6 +192,8 @@ pub fn car_intents_lock(
             // println!("!!! approved intent_query: {:?}", e);
             commands.entity(e).remove::<PathIntentApproved>();
             digest_approved_intent(
+                &mut index,
+                e,
                 &mut car,
                 &mut intent,
                 lock,
@@ -207,7 +213,7 @@ pub fn car_intent_update(
     let now = time.elapsed_seconds();
     for (car, mut intent) in cars.iter_mut() {
         // TODO: update more frequently when locked length is not enough
-        if now - intent.last_update < 0.1 + rand::random::<f32>() * 0.15 {
+        if now - intent.last_update < 0.05 + rand::random::<f32>() * 0.15 {
             continue;
         }
         intent.last_update = now;
@@ -243,7 +249,7 @@ fn adjust_car_acceleration(car: &mut Mut<Car>, locks: &Mut<PathSlicesLocked>) {
         return;
     }
 
-    let mut locked_interval_adj: f32 = 1.0;
+    let mut locked_interval_adj: f32 = 0.1;
     if remain_dist > 1.0 && car.speed < 2.0 {
         locked_interval_adj *= 0.5;
     }
@@ -259,6 +265,7 @@ fn adjust_car_acceleration(car: &mut Mut<Car>, locks: &Mut<PathSlicesLocked>) {
 }
 
 pub fn car_move(
+    mut index: ResMut<PathLockIndex>,
     mut car_query: Query<(Entity, &mut Car, &mut Transform)>,
     mut locked_path_slices_query: Query<&mut PathSlicesLocked>,
 
@@ -314,7 +321,7 @@ pub fn car_move(
         if position == car.last_position {
             continue;
         }
-
+        index.upsert_locks(&car_e, locked_path_slices.locks.iter().cloned());
         let translate = Transform::from_translation(car.last_position);
         let rotation = translate.looking_at(position, Vec3::Y);
         car.last_position = position;
@@ -375,7 +382,7 @@ pub fn test_setup_car_and_path(
     link_next(&mut commands, path_a, 1.0, path_e, 0.0);
     link_next(&mut commands, path_c, 1.0, path_e, 0.0);
 
-    for i in 0..1000 {
+    for i in 0..10000 {
         let slice_a = PathSlice::new(path_a, 0.0, 0.85, curve_a.clone());
         let slice_b = PathSlice::new(path_a, 0.85, 1.0, curve_a.clone());
 
@@ -490,8 +497,5 @@ pub fn test_setup_car_and_path(
             commands.entity(car_b_e).add_child(*path_slice_e);
             commands.entity(*path_slice_e).set_parent(car_b_e);
         }
-
-        lock_index.locked.insert(car_a_e);
-        lock_index.locked.insert(car_b_e);
     }
 }
