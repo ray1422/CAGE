@@ -119,7 +119,7 @@ fn remove_car_path(
     car.path_slices.retain(|e| !pop_e.contains(e));
 }
 
-const LOCKED_INTERVAL: f32 = 10.5;
+const LOCKED_INTERVAL: f32 = 0.5;
 
 fn digest_approved_intent(
     car: &mut Mut<Car>,

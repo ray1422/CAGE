@@ -151,35 +151,32 @@ pub fn schedule_intents(
     let mut pending_intents: VecDeque<(Entity, PathIntent)> = VecDeque::new();
 
     'intents: for (intent_e, mut intent) in intents.iter_mut() {
-        for lock in locked_path_slices.iter() {
-            if lock.0 == intent_e {
-                continue;
-            }
-            if intent.path_locks.is_empty() {
-                break;
-            }
-            for locked_path_slice in lock.1.locks.iter() {
-                if intent.path_locks.is_empty() {
-                    break;
-                }
-                for (j, path_lock) in intent.path_locks.iter_mut().enumerate() {
-                    if path_lock.path_slice.path_e != locked_path_slice.path_slice.path_e {
+        'l: loop {
+            for (j, path_lock) in intent.path_locks.iter_mut().enumerate() {
+                for lock in locked_path_slices.iter() {
+                    if lock.0 == intent_e {
                         continue;
                     }
-                    if path_lock.path_slice.start < locked_path_slice.path_slice.end
-                        && path_lock.path_slice.end > locked_path_slice.path_slice.start
-                    {
-                        // continue 'm;
-                        if trim_lock(path_lock, locked_path_slice.path_slice.start) {
-                            intent.path_locks.truncate(j + 1);
-                        } else {
-                            intent.path_locks.truncate(j);
-                            pop_locks_until_no_group(&mut intent.path_locks);
+                    for locked_path_slice in lock.1.locks.iter() {
+                        if path_lock.path_slice.path_e != locked_path_slice.path_slice.path_e {
+                            continue;
                         }
-                        break;
+                        if path_lock.path_slice.start < locked_path_slice.path_slice.end
+                            && path_lock.path_slice.end > locked_path_slice.path_slice.start
+                        {
+                            // continue 'm;
+                            if trim_lock(path_lock, locked_path_slice.path_slice.start) {
+                                intent.path_locks.truncate(j + 1);
+                            } else {
+                                intent.path_locks.truncate(j);
+                                pop_locks_until_no_group(&mut intent.path_locks);
+                            }
+                            continue 'l;
+                        }
                     }
                 }
             }
+            break;
         }
         if intent.path_locks.is_empty() {
             continue;
