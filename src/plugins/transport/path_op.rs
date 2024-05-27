@@ -150,7 +150,7 @@ pub fn schedule_intents(
 ) {
     let mut pending_intents: VecDeque<(Entity, PathIntent)> = VecDeque::new();
 
-    'intents: for (intent_e, mut intent) in intents.iter_mut() {
+    for (intent_e, mut intent) in intents.iter_mut() {
         'l: loop {
             for (j, path_lock) in intent.path_locks.iter_mut().enumerate() {
                 for lock in locked_path_slices.iter() {
@@ -178,50 +178,56 @@ pub fn schedule_intents(
             }
             break;
         }
+
         if intent.path_locks.is_empty() {
             continue;
         }
+        let mut other_iter = pending_intents.iter_mut();
         let intent_priority = intent.priority;
-        'other_intents: for (other_e, other_intent) in pending_intents.iter_mut() {
-            let other_priority = other_intent.priority;
-            'self_lock: for (i, lock) in intent.path_locks.iter_mut().enumerate() {
-                'other_locks: for (j, other_lock) in other_intent.path_locks.iter_mut().enumerate()
-                {
-                    let ps = &lock.path_slice;
-                    let other_ps = &other_lock.path_slice;
-                    if ps.path_e != other_ps.path_e {
-                        continue;
-                    }
-                    if !(ps.start < other_ps.end && ps.end > other_ps.start) {
-                        // no overlap
-                        continue;
-                    }
-                    let mut tmp_other_priority = other_priority;
-                    // overlap
-                    if tmp_other_priority == intent_priority {
-                        // other_priority + or - 1 randomly
-                        tmp_other_priority += if rand::random() { 1 } else { -1 };
-                    }
-                    if tmp_other_priority > intent_priority {
-                        // other has higher priority
-                        if trim_lock(lock, other_ps.start) {
-                            intent.path_locks.truncate(i + 1);
-                        } else {
-                            intent.path_locks.truncate(i);
-                            pop_locks_until_no_group(&mut intent.path_locks);
+        'l: loop {
+            for (other_e, other_intent) in other_iter.by_ref() {
+                let other_priority = other_intent.priority;
+                'self_lock: for (i, lock) in intent.path_locks.iter_mut().enumerate() {
+                    'other_locks: for (j, other_lock) in
+                        other_intent.path_locks.iter_mut().enumerate()
+                    {
+                        let ps = &lock.path_slice;
+                        let other_ps = &other_lock.path_slice;
+                        if ps.path_e != other_ps.path_e {
+                            continue;
                         }
-                        break 'self_lock;
-                    } else {
-                        if trim_lock(other_lock, ps.start) {
-                            other_intent.path_locks.truncate(j + 1);
-                        } else {
-                            other_intent.path_locks.truncate(j);
-                            pop_locks_until_no_group(&mut other_intent.path_locks);
+                        if !(ps.start < other_ps.end && ps.end > other_ps.start) {
+                            // no overlap
+                            continue;
                         }
-                        break 'other_intents;
+                        let mut tmp_other_priority = other_priority;
+                        // overlap
+                        if tmp_other_priority == intent_priority {
+                            // other_priority + or - 1 randomly
+                            tmp_other_priority += if rand::random() { 1 } else { -1 };
+                        }
+                        if tmp_other_priority > intent_priority {
+                            // other has higher priority
+                            if trim_lock(lock, other_ps.start) {
+                                intent.path_locks.truncate(i + 1);
+                            } else {
+                                intent.path_locks.truncate(i);
+                                pop_locks_until_no_group(&mut intent.path_locks);
+                            }
+                            continue 'l;
+                        } else {
+                            if trim_lock(other_lock, ps.start) {
+                                other_intent.path_locks.truncate(j + 1);
+                            } else {
+                                other_intent.path_locks.truncate(j);
+                                pop_locks_until_no_group(&mut other_intent.path_locks);
+                            }
+                            continue 'l;
+                        }
                     }
                 }
             }
+            break;
         }
         pending_intents.push_back((intent_e, intent.clone()));
     }

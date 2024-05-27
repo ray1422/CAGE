@@ -119,7 +119,7 @@ fn remove_car_path(
     car.path_slices.retain(|e| !pop_e.contains(e));
 }
 
-const LOCKED_INTERVAL: f32 = 0.5;
+const LOCKED_INTERVAL: f32 = 0.2;
 
 fn digest_approved_intent(
     car: &mut Mut<Car>,
@@ -207,7 +207,7 @@ pub fn car_intent_update(
     let now = time.elapsed_seconds();
     for (car, mut intent) in cars.iter_mut() {
         // TODO: update more frequently when locked length is not enough
-        if now - intent.last_update < 0.25 {
+        if now - intent.last_update < 0.1 + rand::random::<f32>() * 0.15 {
             continue;
         }
         intent.last_update = now;
@@ -272,7 +272,7 @@ pub fn car_move(
         let mut locked_path_slices = locked_path_slices.unwrap();
         adjust_car_acceleration(&mut car, &locked_path_slices);
         car.speed += car.acceleration * time.delta_seconds();
-        car.speed = car.speed.min(30.0).max(0.0);
+        car.speed = car.speed.min(60.0).max(0.0);
 
         let mut distance = car.speed * time.delta_seconds();
         let mut position = car.last_position;
@@ -292,7 +292,11 @@ pub fn car_move(
             let path_slice = &mut lock.path_slice;
             if path_slice.length() <= distance {
                 // println!("!!! [move] lock of path_slice removed: {:?}", path_slice);
-                let path_slice = locked_path_slices.locks.remove(idx_offset).unwrap().path_slice;
+                let path_slice = locked_path_slices
+                    .locks
+                    .remove(idx_offset)
+                    .unwrap()
+                    .path_slice;
                 position = path_slice.position(1.0);
                 distance -= path_slice.length();
             } else {
@@ -357,7 +361,7 @@ pub fn test_setup_car_and_path(
     let curve_e = QuadraticBezierCurve::new([
         Vec3::new(0.0, 0.0, 6.0),
         Vec3::new(0.0, 0.0, 0.0),
-        Vec3::new(0.0, 0.0, -29.0),
+        Vec3::new(0.0, 0.0, -929.0),
     ])
     .to_curve();
     let path_e = commands
@@ -371,7 +375,7 @@ pub fn test_setup_car_and_path(
     link_next(&mut commands, path_a, 1.0, path_e, 0.0);
     link_next(&mut commands, path_c, 1.0, path_e, 0.0);
 
-    for i in 0..4 {
+    for i in 0..1000 {
         let slice_a = PathSlice::new(path_a, 0.0, 0.85, curve_a.clone());
         let slice_b = PathSlice::new(path_a, 0.85, 1.0, curve_a.clone());
 
@@ -445,7 +449,7 @@ pub fn test_setup_car_and_path(
                     length: 2.1,
                     speed: 0.0,
                     acceleration: 0.0,
-                    acc_max: 23.9 + rand::random::<f32>() * 5.0,
+                    acc_max: 123.9 + rand::random::<f32>() * 5.0,
                     path_slices: car_a_slices.clone(),
                     last_position: Vec3::ONE * 999.0,
                 },
@@ -473,7 +477,7 @@ pub fn test_setup_car_and_path(
                     length: 2.1,
                     speed: 0.,
                     acceleration: 0.0,
-                    acc_max: 23.9 + rand::random::<f32>() * 5.0,
+                    acc_max: 123.9 + rand::random::<f32>() * 5.0,
                     path_slices: car_b_slices.clone(),
                     last_position: Vec3::ONE * 999.,
                 },
